@@ -1,0 +1,2 @@
+date,commit,host,julia,threads,blas_threads,kind,data,dim,n,unique,metric,k,batchsize,stream_s,us_per_vector,gflops,single_query_ms,batch_query_us
+2026-10-16 22:39,94f9592-dirty,bayes,1.12.7,8,8,prefix,knntest_1.jls,4096,100000,46768,ip,10,4096,62.1,621.3,313,13.95,1044.9

@@ -227,6 +227,18 @@ end
     @test ids == [2, 1] && sc[1] ≈ 1 && sc[2] == 0
 end
 
+@testset "recall" begin
+    truth = [1 2 3; 4 5 6; 7 8 9]
+    @test recall(truth, truth) == 1.0
+    @test recall(truth, [1 2 3; 4 5 6; 0 0 0]) ≈ 2 / 3
+    @test recall(truth, [1 2 3; 4 5 6; 7 8 9]; k = 2) == 1.0
+    @test recall(truth, [9 9 9; 9 9 9; 9 9 9]) ≈ 1 / 9
+    @test recall([0 1; 0 0], [5 1; 6 7]) == 1.0          # query with no truth is skipped
+    @test isnan(recall(zeros(Int, 2, 2), ones(Int, 2, 2)))
+    @test_throws DimensionMismatch recall(truth, truth[:, 1:2])
+    @test_throws ArgumentError recall(truth, truth[1:2, :]; k = 3)
+end
+
 @testset "Float64 storage computes in Float64" begin
     db = KNNDatabase{Float64}(4; metric = Euclidean())
     @test StreamingKNN.computetype(db) === Float64

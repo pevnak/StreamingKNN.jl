@@ -92,3 +92,21 @@ Memory is the Float16 storage (`2 · dim · n` bytes: 10 GB for 5 M × 1024,
   participate in the matrix products until then.
 * `KNNDatabase{Float32}` or `KNNDatabase{Float64}` skip the conversion step
   entirely at the cost of memory.
+
+## Benchmarks, performance log and ground truth
+
+The `bench/` directory expects a real data file (a serialized `Matrix{Float16}`,
+one vector per column; not committed) and keeps a running log of how the
+engine performs on it in `bench/perflog.csv`, one row per run with the
+commit hash, machine, thread counts, timings and sustained GFLOP/s.
+
+```sh
+julia --project -t auto bench/perflog.jl --n 100000             # prefix benchmark, appends a row
+julia --project -t auto bench/groundtruth.jl --k 100            # exact results of the whole stream
+julia --project -t auto bench/bench.jl 1024 100000              # synthetic kernel micro-benchmarks
+```
+
+`groundtruth.jl` stores the exact causal neighbours (ids, scores, and the
+representative id of every column) in `bench/groundtruth/`, also not
+committed.  An approximate method is evaluated against it with
+`recall(gt.ids, pred; k)`.

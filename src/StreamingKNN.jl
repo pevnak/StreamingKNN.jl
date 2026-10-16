@@ -11,7 +11,7 @@ module StreamingKNN
 using LinearAlgebra: mul!
 
 export KNNDatabase, Metric, InnerProduct, Cosine, Euclidean
-export knn, knn_push!, stream_knn!, compact!
+export knn, knn_push!, stream_knn!, compact!, recall
 export duplicates, representative, isdeleted, nseen, nslots, dimension, metric, deadfraction
 
 include("metrics.jl")
@@ -19,5 +19,6 @@ include("topk.jl")
 include("storage.jl")
 include("database.jl")
 include("search.jl")
+include("recall.jl")
 
 end # module StreamingKNN
