@@ -118,13 +118,16 @@ inner product, see `bench/perflog.csv`:
 | run                                           | time    | equivalent GFLOP/s |
 |-----------------------------------------------|---------|--------------------|
 | full stream, no filter, k = 100 (ground truth)| 99 min  | 377                |
+| full stream, `HeadFilter(1024; gemm = 512)`, k = 10 | 21 min | 1810         |
 | first 400 k, no filter (extrapolated)         | ~862 s  | 377                |
 | first 400 k, `HeadFilter(1024; gemm = 512)`   | 230 s   | 1414               |
 
 "Equivalent GFLOP/s" counts the work a full scan would do, so it measures
-the speed-up directly: the filter gives about 3.7× on this data with results
-identical to the exact scan (recall 1.0 against the stored ground truth up
-to Float32 ties).
+the speed-up directly: the filter gives 4.8× on the full stream (3.7× on the
+first 400 k; pruning improves as the database grows) with results identical
+to the exact scan (recall 1.0 against the stored ground truth up to Float32
+ties).  On the full stream 1.7 % of the candidate pairs pass the first
+bound and 0.16 % are scored exactly.
 
 Extrapolations for 5 M vectors at 1024 dims on the same machine without the
 filter: a single query takes about 0.7 s, a batched query about 30 ms, and

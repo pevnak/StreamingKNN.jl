@@ -12,3 +12,4 @@ date,commit,host,julia,threads,blas_threads,kind,data,dim,n,unique,metric,k,batc
 2026-10-17 22:24,0abfa6e-dirty,bayes,1.12.7,8,8,prefix+filter512:1024,knntest_1.jls,4096,400000,204280,ip,10,4096,282.3,705.7,1151,46.03,1509.2
 2026-10-17 22:31,0abfa6e-dirty,bayes,1.12.7,8,8,prefix+filter512:1024c0,knntest_1.jls,4096,400000,204280,ip,10,4096,229.8,574.4,1414,21.78,1102.4
 2026-10-17 22:39,0abfa6e-dirty,bayes,1.12.7,8,8,prefix+filter512:1024,knntest_1.jls,4096,400000,204280,ip,10,4096,235.2,588.1,1381,22.51,1363.7
+2026-10-17 23:04,6a1d641,bayes,1.12.7,8,8,prefix+filter512:1024,knntest_1.jls,4096,1042898,516128,ip,10,4096,1240.4,1189.4,1810,52.03,2486.2
