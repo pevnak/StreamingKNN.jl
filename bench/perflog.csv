@@ -1,3 +1,14 @@
 date,commit,host,julia,threads,blas_threads,kind,data,dim,n,unique,metric,k,batchsize,stream_s,us_per_vector,gflops,single_query_ms,batch_query_us
 2026-10-16 22:39,94f9592-dirty,bayes,1.12.7,8,8,prefix,knntest_1.jls,4096,100000,46768,ip,10,4096,62.1,621.3,313,13.95,1044.9
 2026-10-17 00:19,63ed2ad,bayes,1.12.7,8,8,groundtruth,knntest_1.jls,4096,1042898,516128,ip,100,4096,5959.9,5714.8,377,145.99,11999.3
+2026-10-17 21:19,0abfa6e-dirty,bayes,1.12.7,8,8,prefix+filter512,knntest_1.jls,4096,100000,46768,ip,10,4096,41.5,414.9,469,7.24,740.6
+2026-10-17 21:26,0abfa6e-dirty,bayes,1.12.7,8,8,prefix+filter512,knntest_1.jls,4096,100000,46768,ip,10,4096,49.5,494.9,393,27.34,568.0
+2026-10-17 21:38,0abfa6e-dirty,bayes,1.12.7,8,8,prefix+filter512,knntest_1.jls,4096,100000,46768,ip,10,4096,36.2,362.4,537,29.62,736.8
+2026-10-17 21:49,0abfa6e-dirty,bayes,1.12.7,8,8,prefix+filter512,knntest_1.jls,4096,400000,204280,ip,10,4096,460.5,1151.2,706,18.16,2115.6
+2026-10-17 21:58,0abfa6e-dirty,bayes,1.12.7,8,8,prefix+filter512,knntest_1.jls,4096,100000,46768,ip,10,4096,31.9,318.7,611,7.23,464.9
+2026-10-17 21:59,0abfa6e-dirty,bayes,1.12.7,8,8,prefix+filter512,knntest_1.jls,4096,100000,46768,ip,10,4096,29.9,298.8,651,7.34,1616.7
+2026-10-17 22:08,0abfa6e-dirty,bayes,1.12.7,8,8,prefix+filter512,knntest_1.jls,4096,100000,46768,ip,10,4096,33.9,339.4,573,9.80,507.1
+2026-10-17 22:16,0abfa6e-dirty,bayes,1.12.7,8,8,prefix+filter512:1024,knntest_1.jls,4096,100000,46768,ip,10,4096,27.4,274.2,710,14.19,541.8
+2026-10-17 22:24,0abfa6e-dirty,bayes,1.12.7,8,8,prefix+filter512:1024,knntest_1.jls,4096,400000,204280,ip,10,4096,282.3,705.7,1151,46.03,1509.2
+2026-10-17 22:31,0abfa6e-dirty,bayes,1.12.7,8,8,prefix+filter512:1024c0,knntest_1.jls,4096,400000,204280,ip,10,4096,229.8,574.4,1414,21.78,1102.4
+2026-10-17 22:39,0abfa6e-dirty,bayes,1.12.7,8,8,prefix+filter512:1024,knntest_1.jls,4096,400000,204280,ip,10,4096,235.2,588.1,1381,22.51,1363.7

@@ -8,15 +8,17 @@ duplicate folding and deletion.  See [`KNNDatabase`](@ref), [`stream_knn!`](@ref
 """
 module StreamingKNN
 
-using LinearAlgebra: mul!
+using LinearAlgebra: mul!, I, Symmetric, eigen
 
 export KNNDatabase, Metric, InnerProduct, Cosine, Euclidean
+export Filter, NoFilter, HeadFilter, pca_basis, head_energy, filter_stats, reset_stats!
 export knn, knn_push!, stream_knn!, compact!, recall
 export duplicates, representative, isdeleted, nseen, nslots, dimension, metric, deadfraction
 
 include("metrics.jl")
 include("topk.jl")
 include("storage.jl")
+include("filter.jl")
 include("database.jl")
 include("search.jl")
 include("recall.jl")

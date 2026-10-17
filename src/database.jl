@@ -1,5 +1,12 @@
+"Counters of the filtered search, see [`HeadFilter`](@ref) and [`filter_stats`](@ref)."
+mutable struct FilterStats
+    scanned::Int      # candidate (slot, query) pairs bounded
+    stage2::Int       # pairs that passed the first bound and were bounded again with the rest of the head
+    refined::Int      # pairs that needed an exact score
+end
+
 """
-    KNNDatabase{T,C,M}
+    KNNDatabase{T,C,M,F}
 
 Exact nearest-neighbour database for streaming vectors.
 
@@ -15,11 +22,19 @@ Terminology
   share a slot when the vectors are `isequal` after conversion to `T`.
   Search results report the smallest alive id of each slot.
 """
-mutable struct KNNDatabase{T,C<:AbstractFloat,M<:Metric}
+mutable struct KNNDatabase{T,C<:AbstractFloat,M<:Metric,F<:Filter}
     metric::M
     k::Int
     storage::ChunkedStorage{T}
     direct_batch::Int                 # use the direct dot kernel for batches up to this size
+    # filter ----------------------------------------------------------------
+    filter::F
+    head::ChunkedStorage{T}           # ndims × n heads (empty without filter)
+    tail_c::Vector{C}                 # per slot: ‖x‖ beyond the coarse sub-head
+    tail_g::Vector{C}                 # per slot: ‖x‖ beyond the gemm sub-head
+    tail_h::Vector{C}                 # per slot: ‖x‖ beyond the stored head
+    headerr::Vector{C}                # per slot: head rounding error + slack·‖x‖
+    stats::FilterStats
     # per slot --------------------------------------------------------------
     scale::Vector{C}
     shift::Vector{C}
@@ -41,21 +56,27 @@ end
 default_compute_type(::Type{T}) where {T} = T === Float64 ? Float64 : Float32
 
 """
-    KNNDatabase{T}(dim; metric = InnerProduct(), k = 10, chunksize = 2^15, compute = ..., direct_batch = 16)
+    KNNDatabase{T}(dim; metric = InnerProduct(), k = 10, filter = NoFilter(),
+                   chunksize = 2^15, compute = ..., direct_batch = 16)
     KNNDatabase(X::AbstractMatrix; kwargs...)
 
 Create an empty database for `dim`-dimensional vectors stored as `T`, or one
 initialised with the columns of `X` (stored as `T = eltype(X)` unless given).
+Pass `filter = HeadFilter(...)` for exact filter-and-refine search, see
+[`HeadFilter`](@ref).
 """
 function KNNDatabase{T}(dim::Integer;
                         metric::Metric = InnerProduct(),
                         k::Integer = 10,
+                        filter::Filter = NoFilter(),
                         chunksize::Integer = 1 << 15,
                         compute::Type{C} = default_compute_type(T),
                         direct_batch::Integer = 16) where {T,C<:AbstractFloat}
     k >= 1 || throw(ArgumentError("k must be positive"))
-    KNNDatabase{T,C,typeof(metric)}(
+    f = adapt_filter(filter, C, Int(dim))
+    KNNDatabase{T,C,typeof(metric),typeof(f)}(
         metric, Int(k), ChunkedStorage{T}(dim; chunksize), Int(direct_batch),
+        f, ChunkedStorage{T}(head_dims(f); chunksize), C[], C[], C[], C[], FilterStats(0, 0, 0),
         C[], C[], C[], Int[], BitVector(), 0,
         0, Int[], Dict{Int,Vector{Int}}(),
         Dict{UInt64,Int}(), Dict{UInt64,Vector{Int}}(),
@@ -78,6 +99,21 @@ storagetype(::KNNDatabase{T}) where {T} = T
 computetype(::KNNDatabase{T,C}) where {T,C} = C
 metric(db::KNNDatabase) = db.metric
 dimension(db::KNNDatabase) = db.storage.dim
+hasfilter(db::KNNDatabase) = hasfilter(db.filter)
+
+"""
+    filter_stats(db) -> (scanned, stage2, refined, fraction)
+
+Counters of the filtered search since the last [`reset_stats!`](@ref):
+candidate pairs bounded, pairs bounded a second time with the rest of the
+head, pairs that needed an exact score, and the ratio refined / scanned.
+"""
+function filter_stats(db::KNNDatabase)
+    s = db.stats
+    (scanned = s.scanned, stage2 = s.stage2, refined = s.refined,
+     fraction = s.scanned == 0 ? NaN : s.refined / s.scanned)
+end
+reset_stats!(db::KNNDatabase) = (db.stats.scanned = 0; db.stats.stage2 = 0; db.stats.refined = 0; db)
 
 "Number of alive unique vectors."
 Base.length(db::KNNDatabase) = db.nalive
@@ -121,28 +157,76 @@ end
 
 function Base.show(io::IO, db::KNNDatabase{T,C,M}) where {T,C,M}
     print(io, "KNNDatabase{$T,$C}($(M()), dim=$(dimension(db)), k=$(db.k), ",
-          "unique=$(length(db)), ids=$(nseen(db)), slots=$(nslots(db)))")
+          "unique=$(length(db)), ids=$(nseen(db)), slots=$(nslots(db))")
+    hasfilter(db) && print(io, ", filter=HeadFilter($(db.filter.ndims), gemm=$(db.filter.gemm))")
+    print(io, ")")
 end
 
 # ---------------------------------------------------------------------------
 # hashing & dedup
 
-"Hash of a vector consistent with elementwise `isequal`."
-function vhash(x::AbstractVector)
+"""
+    vhash(x)
+
+Hash of the bit patterns of a vector.  Two vectors are duplicates when they
+are bitwise identical after conversion to the storage type (so `0.0` and
+`-0.0` are distinct, and equal `NaN` payloads are duplicates).  For the
+common element types the bits are packed into 64-bit words before hashing.
+"""
+function vhash(x::AbstractVector{T}) where {T}
     h = hash(length(x))
-    @inbounds for i in eachindex(x)
-        h = hash(x[i], h)
+    n = length(x)
+    if T === Float16 || T === Int16 || T === UInt16
+        i = firstindex(x)
+        @inbounds while i + 3 <= lastindex(x)
+            w = UInt64(bits16(x[i])) | UInt64(bits16(x[i+1])) << 16 |
+                UInt64(bits16(x[i+2])) << 32 | UInt64(bits16(x[i+3])) << 48
+            h = hash(w, h)
+            i += 4
+        end
+        @inbounds while i <= lastindex(x)
+            h = hash(UInt64(bits16(x[i])), h)
+            i += 1
+        end
+    elseif T === Float32 || T === Int32 || T === UInt32
+        i = firstindex(x)
+        @inbounds while i + 1 <= lastindex(x)
+            h = hash(UInt64(bits32(x[i])) | UInt64(bits32(x[i+1])) << 32, h)
+            i += 2
+        end
+        @inbounds while i <= lastindex(x)
+            h = hash(UInt64(bits32(x[i])), h)
+            i += 1
+        end
+    elseif T === Float64 || T === Int64 || T === UInt64
+        @inbounds for i in eachindex(x)
+            h = hash(reinterpret(UInt64, x[i]), h)
+        end
+    else
+        @inbounds for i in eachindex(x)
+            h = hash(x[i], h)
+        end
     end
     h
 end
+@inline bits16(v) = reinterpret(UInt16, v)
+@inline bits32(v) = reinterpret(UInt32, v)
 
-function vequal(a::AbstractVector, b::AbstractVector)
+"Bitwise equality of two vectors (see [`vhash`](@ref))."
+function vequal(a::AbstractVector{T}, b::AbstractVector{T}) where {T}
     length(a) == length(b) || return false
-    @inbounds for i in eachindex(a, b)
-        isequal(a[i], b[i]) || return false
+    if isbitstype(T)
+        @inbounds for i in eachindex(a, b)
+            a[i] === b[i] || return false                 # bitwise identity
+        end
+    else
+        @inbounds for i in eachindex(a, b)
+            isequal(a[i], b[i]) || return false
+        end
     end
     true
 end
+vequal(a::AbstractVector, b::AbstractVector) = vequal(promote(a, b)...)
 
 "Slot holding a vector `isequal` to `x`, or 0."
 function find_slot(db::KNNDatabase, h::UInt64, x::AbstractVector)
@@ -225,15 +309,70 @@ function insert_vector!(db::KNNDatabase{T,C}, xt::AbstractVector{T}) where {T,C}
 end
 
 """
+    insert_batch!(db, Xb) -> newpos
+
+Assign ids to all columns of `Xb` (dedup included) and return the positions
+of the columns that created new slots, in order.  Heads of the new slots are
+computed with one matrix product.
+"""
+function insert_batch!(db::KNNDatabase{T}, Xb::AbstractMatrix) where {T}
+    size(Xb, 1) == dimension(db) || throw(DimensionMismatch("expected $(dimension(db)) rows, got $(size(Xb, 1))"))
+    n0 = nslots(db)
+    newpos = Int[]
+    xt = Vector{T}(undef, dimension(db))
+    for i in axes(Xb, 2)
+        xt .= view(Xb, :, i)
+        _, isnew = insert_vector!(db, xt)
+        isnew && push!(newpos, i)
+    end
+    add_heads!(db, n0, length(newpos))
+    newpos
+end
+
+add_heads!(db::KNNDatabase{T,C,M,NoFilter}, n0::Int, nnew::Int) where {T,C,M} = db
+
+"Compute and store heads, tail norms and head errors of slots `n0+1 : n0+nnew`."
+function add_heads!(db::KNNDatabase{T,C,M,<:HeadFilter}, n0::Int, nnew::Int) where {T,C,M}
+    nnew == 0 && return db
+    f = db.filter
+    st = db.storage
+    Xn = Matrix{C}(undef, st.dim, nnew)
+    for j in 1:nnew
+        @inbounds copyto!(view(Xn, :, j), st[n0 + j])
+    end
+    H = heads!(Matrix{C}(undef, f.ndims, nnew), f, Xn)
+    ht = Vector{T}(undef, f.ndims)
+    @inbounds for j in 1:nnew
+        h = view(H, :, j)
+        ht .= h                                      # stored (rounded) head
+        rounding = zero(C)
+        hn2 = zero(C)
+        hn2c = zero(C)
+        hn2g = zero(C)
+        for i in 1:f.ndims
+            rounding += abs2(h[i] - C(ht[i]))
+            hn2 += abs2(h[i])
+            i == f.coarse && (hn2c = hn2)
+            i == f.gemm && (hn2g = hn2)
+        end
+        n2 = db.norms2[n0 + j]
+        push!(db.head, ht)
+        push!(db.tail_c, sqrt(max(zero(C), n2 - hn2c)))
+        push!(db.tail_g, sqrt(max(zero(C), n2 - hn2g)))
+        push!(db.tail_h, sqrt(max(zero(C), n2 - hn2)))
+        push!(db.headerr, sqrt(rounding) + f.slack * sqrt(n2))
+    end
+    db
+end
+
+"""
     push!(db, x) -> id
 
 Insert one vector without searching.  Returns the id assigned to it.
 """
-function Base.push!(db::KNNDatabase{T}, x::AbstractVector) where {T}
+function Base.push!(db::KNNDatabase, x::AbstractVector)
     length(x) == dimension(db) || throw(DimensionMismatch("expected length $(dimension(db)), got $(length(x))"))
-    xt = Vector{T}(undef, length(x))
-    xt .= x
-    insert_vector!(db, xt)
+    insert_batch!(db, reshape(x, :, 1))
     db.nseen
 end
 
@@ -242,14 +381,9 @@ end
 
 Insert the columns of `X` without searching.  Returns the assigned ids.
 """
-function Base.append!(db::KNNDatabase{T}, X::AbstractMatrix) where {T}
-    size(X, 1) == dimension(db) || throw(DimensionMismatch("expected $(dimension(db)) rows, got $(size(X, 1))"))
+function Base.append!(db::KNNDatabase, X::AbstractMatrix)
     first = db.nseen + 1
-    xt = Vector{T}(undef, size(X, 1))
-    for j in axes(X, 2)
-        xt .= view(X, :, j)
-        insert_vector!(db, xt)
-    end
+    insert_batch!(db, X)
     first:db.nseen
 end
 
@@ -306,12 +440,23 @@ function compact!(db::KNNDatabase)
         remap[r] = w
         w == r && continue
         movecolumn!(db.storage, w, r)
+        if hasfilter(db)
+            movecolumn!(db.head, w, r)
+            db.tail_c[w] = db.tail_c[r]
+            db.tail_g[w] = db.tail_g[r]
+            db.tail_h[w] = db.tail_h[r]
+            db.headerr[w] = db.headerr[r]
+        end
         db.scale[w] = db.scale[r]
         db.shift[w] = db.shift[r]
         db.norms2[w] = db.norms2[r]
         db.rep_id[w] = db.rep_id[r]
     end
     truncate!(db.storage, w)
+    if hasfilter(db)
+        truncate!(db.head, w)
+        resize!(db.tail_c, w); resize!(db.tail_g, w); resize!(db.tail_h, w); resize!(db.headerr, w)
+    end
     resize!(db.scale, w); resize!(db.shift, w); resize!(db.norms2, w); resize!(db.rep_id, w)
     db.alive = trues(w)
     for id in 1:db.nseen

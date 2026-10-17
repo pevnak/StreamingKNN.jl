@@ -2,6 +2,7 @@ using StreamingKNN
 using StreamingKNN: reference_score, TopK, threshold, sorted_indices!, reset!
 using Test
 using Random
+using LinearAlgebra
 
 const METRICS = (InnerProduct(), Cosine(), Euclidean())
 
@@ -225,6 +226,95 @@ end
     @test all(sc .== 0)
     ids, sc = knn(z, [1.0, 0, 0]; k = 2)
     @test ids == [2, 1] && sc[1] ≈ 1 && sc[2] == 0
+end
+
+"Data with a decaying spectrum in a random orientation plus near-duplicates, so the filter prunes."
+function spectral_data(rng, d, n; decay = 1.4)
+    U = Matrix(qr(randn(rng, d, d)).Q)
+    X = Float32.(U * (randn(rng, Float32, d, n) .* Float32.(decay .^ (-(0:d-1)))))
+    for j in 5:7:n                                   # near-duplicates and exact duplicates
+        X[:, j] = X[:, j - 3] .+ Float32(1e-3) .* randn(rng, Float32, d)
+    end
+    for j in 9:11:n
+        X[:, j] = X[:, j - 4]
+    end
+    X
+end
+
+@testset "HeadFilter gives identical results ($(T), $(typeof(m)), $(mode))" for T in (Float16, Float32),
+        m in METRICS, mode in (:pca, :pca2, :prefix)
+    rng = MersenneTwister(hash((T, typeof(m), mode)))
+    d, n, k = 48, 1200, 7
+    X = spectral_data(rng, d, n)
+    if mode == :prefix
+        X = Float32.(Matrix(qr(randn(rng, d, d)).Q)' * X)   # rotate so the energy is spread, prefix prunes little
+        X = Float32.(pca_basis(X, d)' * X)                   # ... then align the data with its own PCA axes
+    end
+    f = mode == :pca  ? HeadFilter(pca_basis(X[:, 1:400], 6); coarse = 2, ncold = 8) :
+        mode == :pca2 ? HeadFilter(pca_basis(X[:, 1:400], 12); gemm = 6, coarse = 3, ncold = 8) :
+                        HeadFilter(8; gemm = 6, coarse = 0)
+    @test head_energy(X, 6; basis = mode == :prefix ? nothing : f.basis[:, 1:6]) > 0.9
+    ref = KNNDatabase{T}(d; metric = m, k, chunksize = 128)
+    rids, rsc = stream_knn!(ref, X; batchsize = 300)
+    for batchsize in (1, 300)
+        db = KNNDatabase{T}(d; metric = m, k, filter = f, chunksize = 128)
+        ids, sc = stream_knn!(db, X; batchsize)
+        @test all(isapprox.(sc, rsc; rtol = 1e-4, atol = 1e-5, nans = true))
+        # ids may differ only where scores tie
+        for t in 1:n, r in 1:k
+            ids[r, t] == rids[r, t] || @test isapprox(sc[r, t], rsc[r, t]; rtol = 1e-4, atol = 1e-5)
+        end
+        st = filter_stats(db)
+        @test st.scanned > 0 && st.refined < 0.5 * st.scanned
+        mode == :pca || @test 0 < st.stage2 < st.scanned
+        # plain queries over the final database
+        qids, qsc = knn(db, X[:, 1:50]; k, batchsize = 20)
+        rq = knn(ref, X[:, 1:50]; k)
+        @test all(isapprox.(qsc, rq[2]; rtol = 1e-4, atol = 1e-5, nans = true))
+        # k larger than the number of stored vectors and an empty database
+        e = KNNDatabase{T}(d; metric = m, filter = f)
+        @test knn(e, X[:, 1]; k = 3)[1] == [0, 0, 0]
+        push!(e, X[:, 1]); push!(e, X[:, 2])
+        i2, s2 = knn(e, X[:, 3]; k = 5)
+        @test count(!=(0), i2) == 2 && count(!isnan, s2) == 2
+        @test isapprox(s2[1], reference_score(m, Vector{T}(X[:, i2[1]]), X[:, 3]); rtol = 1e-4, atol = 1e-5)
+    end
+    # deletion + compaction keep heads aligned with vectors
+    db = KNNDatabase{T}(X; metric = m, k, filter = f, chunksize = 128)
+    foreach(id -> delete!(db, id), 1:3:n)
+    ref2 = KNNDatabase{T}(X; metric = m, k, chunksize = 128)
+    foreach(id -> delete!(db, id), 1:3:n); foreach(id -> delete!(ref2, id), 1:3:n)
+    Q = X[:, 2:5:200]
+    a = knn(db, Q; k); b = knn(ref2, Q; k)
+    @test all(isapprox.(a[2], b[2]; rtol = 1e-4, atol = 1e-5, nans = true))
+    compact!(db)
+    reset_stats!(db)
+    c = knn(db, Q; k)
+    @test all(isapprox.(c[2], b[2]; rtol = 1e-4, atol = 1e-5, nans = true))
+    @test filter_stats(db).refined < filter_stats(db).scanned
+    ids3, sc3 = stream_knn!(db, X[:, 1:100]; batchsize = 40)
+    ids4, sc4 = stream_knn!(ref2, X[:, 1:100]; batchsize = 40)
+    @test all(isapprox.(sc3, sc4; rtol = 1e-4, atol = 1e-5, nans = true))
+end
+
+@testset "HeadFilter argument checks" begin
+    @test_throws ArgumentError HeadFilter(randn(8, 3))                   # not orthonormal
+    @test_throws ArgumentError HeadFilter(ones(3, 8))                     # more head dims than dim
+    B = Matrix(qr(randn(8, 3)).Q)
+    @test_throws ArgumentError KNNDatabase(5; filter = HeadFilter(B))      # dim mismatch
+    @test_throws ArgumentError KNNDatabase(5; filter = HeadFilter(6))
+    @test_throws ArgumentError HeadFilter(6; coarse = 7)
+    @test_throws ArgumentError HeadFilter(6; gemm = 7)
+    @test_throws ArgumentError HeadFilter(6; gemm = 4, coarse = 5)
+    @test HeadFilter(512).coarse == 0
+    @test HeadFilter(1024; gemm = 512, coarse = 128).coarse == 128
+    db = KNNDatabase(8; filter = HeadFilter(B))
+    @test StreamingKNN.hasfilter(db)
+    @test db.filter.basis isa Matrix{Float32}
+    @test !StreamingKNN.hasfilter(KNNDatabase(8))
+    X = randn(8, 50)
+    @test 0 < head_energy(X, 3) < 1
+    @test pca_basis(X, 8)' * pca_basis(X, 8) ≈ I atol = 1e-5
 end
 
 @testset "recall" begin
