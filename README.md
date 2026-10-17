@@ -109,4 +109,8 @@ julia --project -t auto bench/bench.jl 1024 100000              # synthetic kern
 `groundtruth.jl` stores the exact causal neighbours (ids, scores, and the
 representative id of every column) in `bench/groundtruth/`, also not
 committed.  An approximate method is evaluated against it with
-`recall(gt.ids, pred; k)`.
+`recall(gt.ids, pred; k)`, or, when the data contains near-duplicates whose
+scores tie within noise, with the score-tolerant form
+`recall(gt.ids, gt.scores, pred_ids, pred_scores; k, metric, atol)`, which
+also accepts a prediction whose exact score is within `atol` of the k-th true
+score.

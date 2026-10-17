@@ -237,6 +237,33 @@ end
     @test isnan(recall(zeros(Int, 2, 2), ones(Int, 2, 2)))
     @test_throws DimensionMismatch recall(truth, truth[:, 1:2])
     @test_throws ArgumentError recall(truth, truth[1:2, :]; k = 3)
+
+    # score-tolerant variant
+    ts = [0.9 0.9 0.9; 0.8 0.8 0.8; 0.7 0.7 0.7]
+    pred = [10 2 3; 4 5 6; 7 8 9]                 # query 1 returns id 10 instead of 1
+    ps = copy(ts)                                 # ... with an identical score (a tie)
+    @test recall(truth, pred) ≈ 8 / 9
+    @test recall(truth, ts, pred, ps) == 1.0      # ties are forgiven even with zero tolerance
+    ps[1, 1] = 0.69                               # now id 10 is genuinely worse than the k-th true score
+    @test recall(truth, ts, pred, ps) ≈ 8 / 9
+    @test recall(truth, ts, pred, ps; atol = 0.02) == 1.0
+    @test recall(truth, ts, pred, ps; rtol = 0.02) == 1.0
+    @test recall(truth, ts, pred, ps; atol = 0.005) ≈ 8 / 9
+    # Euclidean: smaller is better
+    tsd = [0.1 0.1 0.1; 0.2 0.2 0.2; 0.3 0.3 0.3]
+    psd = copy(tsd); psd[1, 1] = 0.31
+    @test recall(truth, tsd, pred, psd; metric = Euclidean()) ≈ 8 / 9
+    @test recall(truth, tsd, pred, psd; metric = Euclidean(), atol = 0.02) == 1.0
+    @test recall(truth, tsd, pred, psd; metric = InnerProduct()) == 1.0        # 0.31 ≥ 0.3 counts as a hit when larger is better
+    # a query cannot score above 1 even if many predictions clear the threshold
+    @test recall([1 ; 0 ;; 2 ; 0], [0.5 0.5; 0.5 0.5], [7 2; 8 9], [0.9 0.9; 0.9 0.9]) == 1.0
+    # duplicate predictions count once
+    @test recall(truth, ts, [10 2 3; 10 5 6; 10 8 9], fill(0.95, 3, 3)) ≈ (1 / 3 + 1 + 1) / 3
+    # smaller k uses the k-th true score
+    @test recall(truth, ts, pred, ps; k = 2) ≈ (1 / 2 + 1 + 1) / 3            # 0.69 < 0.8, the 2nd true score
+    @test recall(truth, ts, [10 2 3; 4 5 6; 7 8 9], [0.79 0.9 0.9; 0.8 0.8 0.8; 0.7 0.7 0.7]; k = 2) ≈ (1 / 2 + 1 + 1) / 3
+    @test_throws DimensionMismatch recall(truth, ts[1:2, :], pred, ps)
+    @test_throws ArgumentError recall(truth, ts, pred, ps; atol = -1)
 end
 
 @testset "Float64 storage computes in Float64" begin

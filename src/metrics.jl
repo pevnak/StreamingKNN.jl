@@ -82,3 +82,8 @@ function reference_score(::Euclidean, x, q)
     end
     sqrt(s)
 end
+
+"Whether a larger reported score means a closer neighbour."
+larger_is_better(::InnerProduct) = true
+larger_is_better(::Cosine) = true
+larger_is_better(::Euclidean) = false
