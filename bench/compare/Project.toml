@@ -1,0 +1,8 @@
+[deps]
+Distances = "b4f34e82-e78d-54a5-968a-f98e89d6e8f7"
+Faiss = "97d83715-92a6-43f6-a1c3-b293f6dd920a"
+HNSW = "540f64fa-c57e-11e8-081c-41422cda4629"
+NearestNeighbors = "b8a86587-4115-5ab1-83bc-aa920d37bbce"
+Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
+SimilaritySearch = "053f045d-5466-53fd-b400-a066f88fe02a"
+StreamingKNN = "9fcf6876-53fd-44a3-a113-bd2571d303bb"

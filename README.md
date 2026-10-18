@@ -142,3 +142,7 @@ julia --project -t auto bench/bench.jl 1024 100000       # synthetic kernel micr
 
 `groundtruth.jl` saves exact neighbours for later recall evaluation; add
 `--check-gt <file>` to `perflog.jl` to verify a run against them.
+
+`bench/compare/` holds a like-for-like comparison against NearestNeighbors.jl,
+SimilaritySearch.jl, HNSW.jl and Faiss on the same streaming workload; see its
+[README](bench/compare/README.md) for the measured table.
