@@ -5,7 +5,7 @@ test/Manifest.toml
 *.jl.mem
 bench/*.jls
 bench/groundtruth/
-bench/compare/Manifest.toml
-bench/compare/ids_*.jls
-bench/compare/results_*.jls
-bench/compare/.CondaPkg/
+benchmark/comparisons/Manifest.toml
+benchmark/comparisons/ids_*.jls
+benchmark/comparisons/results_*.jls
+benchmark/comparisons/.CondaPkg/

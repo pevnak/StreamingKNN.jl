@@ -7,9 +7,16 @@
 # Recall is computed after mapping ids to the first occurrence of each distinct vector,
 # because the data is ~50 % exact duplicates and libraries differ in which copy they report.
 # Setup (the comparison packages are not dependencies of StreamingKNN):
-#   julia --project=bench/compare -e 'using Pkg; Pkg.develop(path="."); \
+#   julia --project=benchmark/comparisons -e 'using Pkg; Pkg.develop(path="."); \
 #       Pkg.add(["NearestNeighbors","SimilaritySearch","HNSW","Distances","Faiss","Serialization"])'
-#   julia --project=bench/compare -t auto bench/compare/compare.jl 20000 1024
+#
+# Usage: compare.jl [n] [batchsize] [comma-separated methods to skip]
+#   julia --project=benchmark/comparisons -t auto benchmark/comparisons/compare.jl 20000 1024
+#   julia --project=benchmark/comparisons -t auto benchmark/comparisons/compare.jl 100000 4096 \
+#         "NearestNeighbors brute,NearestNeighbors KDTree"
+#
+# The two NearestNeighbors trees scan without BLAS and cost O(n^2) with a large constant;
+# at n = 100000 they need hours, so skip them there and extrapolate from a smaller n.
 include(joinpath(@__DIR__, "common.jl"))
 using StreamingKNN
 n  = parse(Int, get(ARGS, 1, "20000"))
