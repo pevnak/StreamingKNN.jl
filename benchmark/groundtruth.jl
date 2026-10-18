@@ -1,10 +1,10 @@
 # Compute and store the exact causal k-NN of a data file, for later recall evaluation of
-# approximate methods, and log the run in bench/perflog.csv.
+# approximate methods, and log the run in benchmark/perflog.csv.
 #
-#   julia --project -t auto bench/groundtruth.jl [--data bench/knntest_1.jls] [--n all]
+#   julia --project -t auto benchmark/groundtruth.jl [--data benchmark/knntest_1.jls] [--n all]
 #                                                [--metric ip|cos|l2] [--k 100] [--batchsize 4096]
 #
-# Output: bench/groundtruth/<data>_<metric>_k<k>_n<n>.jls holding a NamedTuple with
+# Output: benchmark/groundtruth/<data>_<metric>_k<k>_n<n>.jls holding a NamedTuple with
 #   ids::Matrix{Int32}      k × n, representative stream ids (column index of the data), 0-padded
 #   scores::Matrix{Float32} k × n
 #   dups::Vector{Int32}     for every column, the representative id of its vector (itself if unique)

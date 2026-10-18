@@ -3,8 +3,8 @@ test/Manifest.toml
 *.jl.cov
 *.jl.*.cov
 *.jl.mem
-bench/*.jls
-bench/groundtruth/
+benchmark/*.jls
+benchmark/groundtruth/
 benchmark/comparisons/Manifest.toml
 benchmark/comparisons/ids_*.jls
 benchmark/comparisons/results_*.jls

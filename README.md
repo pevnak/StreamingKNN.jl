@@ -131,13 +131,13 @@ bytes for the data, plus the head, plus a Float32 scratch copy of one chunk.
 
 ## Benchmarks
 
-`bench/` expects a serialized `Matrix{Float16}`, one vector per column (not
-committed), and logs every run to `bench/perflog.csv`.
+`benchmark/` expects a serialized `Matrix{Float16}`, one vector per column (not
+committed), and logs every run to `benchmark/perflog.csv`.
 
 ```sh
-julia --project -t auto bench/perflog.jl --n 400000 --filter 512:1024
-julia --project -t auto bench/groundtruth.jl --k 100     # exact results of the whole stream
-julia --project -t auto bench/bench.jl 1024 100000       # synthetic kernel micro-benchmarks
+julia --project -t auto benchmark/perflog.jl --n 400000 --filter 512:1024
+julia --project -t auto benchmark/groundtruth.jl --k 100     # exact results of the whole stream
+julia --project -t auto benchmark/bench.jl 1024 100000       # synthetic kernel micro-benchmarks
 ```
 
 `groundtruth.jl` saves exact neighbours for later recall evaluation; add

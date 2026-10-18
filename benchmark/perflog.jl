@@ -1,6 +1,6 @@
-# Benchmark the exact engine on a prefix of a real data file and append a row to bench/perflog.csv.
+# Benchmark the exact engine on a prefix of a real data file and append a row to benchmark/perflog.csv.
 #
-#   julia --project -t auto bench/perflog.jl [--data bench/knntest_1.jls] [--n 100000]
+#   julia --project -t auto benchmark/perflog.jl [--data benchmark/knntest_1.jls] [--n 100000]
 #                                            [--metric ip|cos|l2] [--k 10] [--batchsize 4096]
 #                                            [--filter 0|<gemm>|<gemm>:<head>] [--pca-sample 50000] [--check-gt <file>]
 # --check-gt compares the results with a ground-truth file written by groundtruth.jl (same data, same metric).

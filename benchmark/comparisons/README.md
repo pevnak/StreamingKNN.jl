@@ -1,6 +1,6 @@
 # Comparison with other Julia nearest-neighbour libraries
 
-Measured on `bench/knntest_1.jls`: Qwen text embeddings, dimension 4096, stored as
+Measured on `benchmark/knntest_1.jls`: Qwen text embeddings, dimension 4096, stored as
 `Float16`.  Metric Euclidean (all vectors have unit norm, so this ranks like cosine
 and inner product).  8-core AMD Threadripper 1900X, 8 Julia threads, 8 BLAS threads,
 `k = 10`, batch 1024.
@@ -66,7 +66,7 @@ independent implementations against each other.
 **The filter crosses over.**  At 20 000 vectors the one-off PCA fit dominates and the
 filter loses (2.87×); at 100 000 it is already the fastest method in the table
 (0.74×, i.e. 26 % faster than the plain scan, fit included), and it reaches 3.7× at
-400 k and 4.8× over the full 1.04 M stream (`bench/perflog.csv`).  Turn it on from
+400 k and 4.8× over the full 1.04 M stream (`benchmark/perflog.csv`).  Turn it on from
 about 10⁵ vectors.
 
 **Approximate indices close the gap but do not overtake.**  SimilaritySearch's graph

@@ -1,4 +1,4 @@
-# Run with:  julia --project=. -t auto bench/bench.jl [dim] [n]
+# Run with:  julia --project=. -t auto benchmark/bench.jl [dim] [n]
 using StreamingKNN
 using StreamingKNN: convert_columns!, direct_scores!, chunk_as, workspace!, load_queries!, search_slots!
 using LinearAlgebra

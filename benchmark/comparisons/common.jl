@@ -1,7 +1,7 @@
 using Serialization, LinearAlgebra, Printf, Statistics
 "Data file: a serialized `Matrix{Float16}`, one vector per column.  Override with STREAMINGKNN_DATA."
 const DATA = get(ENV, "STREAMINGKNN_DATA",
-                 normpath(joinpath(@__DIR__, "..", "..", "bench", "knntest_1.jls")))
+                 normpath(joinpath(@__DIR__, "..", "knntest_1.jls")))
 load_prefix(n) = (X = deserialize(DATA); Matrix(view(X, :, 1:n)))
 
 "Mean recall@k of `pred` ids against causal ground-truth ids (0-padded), skipping empty queries."
