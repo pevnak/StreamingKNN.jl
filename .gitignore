@@ -9,3 +9,4 @@ benchmark/comparisons/Manifest.toml
 benchmark/comparisons/ids_*.jls
 benchmark/comparisons/results_*.jls
 benchmark/comparisons/.CondaPkg/
+benchmark/comparisons/*.log
