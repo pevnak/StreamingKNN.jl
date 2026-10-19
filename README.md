@@ -40,37 +40,89 @@ according to the metric, always sorted best first.
 
 ## Warm start
 
-To load a large initial set without searching it, use `append!` (or the matrix
-constructor).  It is threaded, works in blocks so its scratch memory does not
-grow with the input, and skips the search entirely.
+A warm start loads a large initial set that you do **not** need neighbours for,
+and then hands the database over to the online loop.  Use `append!`, or the
+matrix constructor, which calls it:
 
 ```julia
 db = KNNDatabase(4096; metric = InnerProduct(), k = 10)
-append!(db, X_initial)                       # 1 M vectors in ~6 s
-ids, scores = stream_knn!(db, X_online)      # then stream as usual
+append!(db, X_initial)                        # no searching: 1 M vectors in ~6 s
+ids, scores = stream_knn!(db, X_online)       # then stream as usual
 ```
 
-The result is identical to inserting the same vectors one at a time, duplicate
-folding included.  With a `HeadFilter`, learn the basis from the initial set
-first, so the heads of the warm-start vectors are computed in the same pass:
+This is cheap because it skips the search.  Inserting `n` vectors costs `O(nd)`;
+*streaming* the same `n` costs `O(n²d)`, because every column is also queried
+against everything before it.  On 1.04 M of the embeddings described under
+[Performance](#performance) that is 5.8 seconds against 99 minutes.
+
+The database that results is **identical** to one built by inserting the same
+vectors one at a time, duplicate folding included, so a warm start changes
+nothing about what the online phase then returns.
+
+### Loading in pieces
+
+`append!` can be called repeatedly, which is how to load a set that does not fit
+in memory all at once.  The result is the same as one big call:
 
 ```julia
-basis = pca_basis(X_initial, 1024)           # one-off, ~15 s on 50 k samples
+for part in eachpart(...)                     # however your data is chunked
+    append!(db, part)
+end
+```
+
+Ids are assigned in insertion order across calls, so the id of a vector is its
+position in the overall stream, exactly as with `push!`.
+
+### With a filter
+
+A filter is fixed when the database is constructed, and every vector gets its
+head computed as it is inserted.  So fit the basis **before** creating the
+database, and the warm-start vectors are covered in the same pass:
+
+```julia
+basis = pca_basis(X_initial, 1024)            # one-off, ~15 s on 50 k samples
 db = KNNDatabase(4096; filter = HeadFilter(basis; gemm = 512))
 append!(db, X_initial)
 ```
 
-Measured on 1 042 898 of the 4096-dimensional embeddings described below
-(516 128 of them distinct), 8 threads:
+There is no way to add a filter to a database that already holds vectors.  If
+you expect the database to grow into the hundreds of thousands, decide on the
+filter at this point; see [Going faster](#going-faster).
+
+### Cost
+
+Measured on 1 042 898 embeddings of dimension 4096, of which 516 128 are
+distinct, 8 threads:
 
 | warm start of 1.04 M vectors | time   | per vector |
 |------------------------------|--------|------------|
 | no filter                    | 5.8 s  | 5.5 µs     |
 | with `HeadFilter`            | 23.6 s | 22.6 µs    |
 
-The filter's extra cost is the projection of every distinct vector onto the
-basis, which is the work that makes later queries cheap.  Scratch memory stays
-near 0.3 GB in both cases; pass `block` to `append!` to change it.
+Hashing (for duplicate detection) and the norms are computed on all threads;
+the filter's extra cost is the projection of every distinct vector onto the
+basis, which is the work that makes later queries ~5× cheaper.
+
+`append!` works in blocks of `BULK_BLOCK = 16384` columns, so its scratch space
+is a fixed ~0.3 GB rather than growing with the input.  Pass `block` to change
+it; smaller trades a little speed for less memory.
+
+Memory of the loaded database, per **distinct** vector, plus 8 bytes per id:
+
+```
+2 · dim      bytes   Float16 storage
+2 · ndims    bytes   filter head, if any
+~40          bytes   norms and bookkeeping
+```
+
+So 5 M vectors of dimension 4096 with a 1024-wide head need about 51 GB if all
+are distinct, or about 26 GB at the 50 % duplicate rate of the benchmark data.
+
+### What you do not get
+
+No neighbours are returned for the warm-start vectors themselves.  If you need
+the causal neighbours of the initial set as well, that is the ordinary
+quadratic job: stream it with `stream_knn!` instead of appending it.
 
 ## Operations
 
@@ -160,8 +212,10 @@ dimension 4096 (50 % exact duplicates):
 | full stream, `HeadFilter(1024; gemm=512)` | 21 min | 1810             |
 
 Start Julia with `-t auto`: the conversion, bound and refinement loops use
-Julia threads, the matrix products use BLAS threads.  Memory is `2·dim·n`
-bytes for the data, plus the head, plus a Float32 scratch copy of one chunk.
+Julia threads, the matrix products use BLAS threads.  For memory see
+[Warm start → Cost](#cost); searching adds a Float32 scratch copy of one
+chunk (`4 · dim · chunksize`) and the score buffer
+(`4 · chunksize · batchsize`).
 
 ## Benchmarks
 
