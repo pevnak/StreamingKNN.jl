@@ -317,6 +317,49 @@ end
     @test pca_basis(X, 8)' * pca_basis(X, 8) ≈ I atol = 1e-5
 end
 
+@testset "warm start: append! == one-by-one ($(T), $(typeof(m)), filter=$(usefilter))" for T in (Float16, Float32),
+        m in METRICS, usefilter in (false, true)
+    rng = MersenneTwister(hash((T, typeof(m), usefilter)))
+    d, n, k = 24, 260, 6
+    X = spectral_data(rng, d, n)
+    # duplicates that straddle block boundaries, and a run of identical columns
+    for (a, b) in ((70, 3), (71, 69), (140, 70), (141, 139), (210, 5), (211, 140))
+        X[:, a] = X[:, b]
+    end
+    X[:, 100:103] .= X[:, 100]
+    f = usefilter ? HeadFilter(pca_basis(X[:, 1:120], 5); coarse = 2, ncold = 8) : NoFilter()
+    ref = KNNDatabase{T}(d; metric = m, k, filter = f, chunksize = 32)
+    for t in 1:n
+        push!(ref, X[:, t])
+    end
+    for block in (1, 7, 64, 1000)                       # 7 and 64 split the duplicate pairs
+        db = KNNDatabase{T}(d; metric = m, k, filter = f, chunksize = 32)
+        ids = append!(db, X; block)
+        @test ids == 1:n
+        @test nseen(db) == nseen(ref) == n
+        @test length(db) == length(ref)
+        @test nslots(db) == nslots(ref)
+        @test [representative(db, t) for t in 1:n] == [representative(ref, t) for t in 1:n]
+        @test [db[t] for t in 1:n] == [ref[t] for t in 1:n]
+        @test duplicates(db, 3) == duplicates(ref, 3)
+        @test duplicates(db, 100) == duplicates(ref, 100) == [100, 101, 102, 103]
+        a = knn(db, X[:, 1:40]; k); b = knn(ref, X[:, 1:40]; k)
+        @test a[1] == b[1]
+        @test all(isapprox.(a[2], b[2]; rtol = 1e-4, atol = 1e-5, nans = true))
+    end
+    # warm start then go online: same answers as streaming the whole thing
+    half = 130
+    warm = KNNDatabase{T}(d; metric = m, k, filter = f, chunksize = 32)
+    append!(warm, X[:, 1:half]; block = 16)
+    wids, wsc = stream_knn!(warm, X[:, half+1:n]; batchsize = 17)
+    full = KNNDatabase{T}(d; metric = m, k, filter = f, chunksize = 32)
+    fids, fsc = stream_knn!(full, X; batchsize = 17)
+    @test wids == fids[:, half+1:n]
+    @test all(isapprox.(wsc, fsc[:, half+1:n]; rtol = 1e-4, atol = 1e-5, nans = true))
+    @test_throws DimensionMismatch append!(warm, randn(d + 1, 3))
+    @test_throws ArgumentError append!(warm, X[:, 1:3]; block = 0)
+end
+
 @testset "recall" begin
     truth = [1 2 3; 4 5 6; 7 8 9]
     @test recall(truth, truth) == 1.0

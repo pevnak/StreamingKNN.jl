@@ -38,6 +38,40 @@ KNNDatabase(X0; metric = Cosine())                  # initialised with the colum
 Scores are inner products, cosine similarities, or Euclidean distances
 according to the metric, always sorted best first.
 
+## Warm start
+
+To load a large initial set without searching it, use `append!` (or the matrix
+constructor).  It is threaded, works in blocks so its scratch memory does not
+grow with the input, and skips the search entirely.
+
+```julia
+db = KNNDatabase(4096; metric = InnerProduct(), k = 10)
+append!(db, X_initial)                       # 1 M vectors in ~6 s
+ids, scores = stream_knn!(db, X_online)      # then stream as usual
+```
+
+The result is identical to inserting the same vectors one at a time, duplicate
+folding included.  With a `HeadFilter`, learn the basis from the initial set
+first, so the heads of the warm-start vectors are computed in the same pass:
+
+```julia
+basis = pca_basis(X_initial, 1024)           # one-off, ~15 s on 50 k samples
+db = KNNDatabase(4096; filter = HeadFilter(basis; gemm = 512))
+append!(db, X_initial)
+```
+
+Measured on 1 042 898 of the 4096-dimensional embeddings described below
+(516 128 of them distinct), 8 threads:
+
+| warm start of 1.04 M vectors | time   | per vector |
+|------------------------------|--------|------------|
+| no filter                    | 5.8 s  | 5.5 µs     |
+| with `HeadFilter`            | 23.6 s | 22.6 µs    |
+
+The filter's extra cost is the projection of every distinct vector onto the
+basis, which is the work that makes later queries cheap.  Scratch memory stays
+near 0.3 GB in both cases; pass `block` to `append!` to change it.
+
 ## Operations
 
 ```julia
@@ -45,7 +79,7 @@ ids, scores = stream_knn!(db, X; k, batchsize)   # query each column, then inser
 ids, scores = knn_push!(db, x; k)                # one streaming step
 ids, scores = knn(db, x; k)                      # query only (also takes a matrix)
 id          = push!(db, x)                       # insert only, returns the id
-ids         = append!(db, X)                     # insert many
+ids         = append!(db, X)                     # insert many (warm start, see above)
 delete!(db, id)                                  # remove one id
 compact!(db)                                     # reclaim storage of deleted vectors
 ```

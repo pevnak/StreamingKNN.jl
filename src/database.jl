@@ -279,11 +279,11 @@ end
 """
     insert_vector!(db, xt) -> (slot, isnew)
 
-Assign a new id to `xt` (already converted to the storage type).  Returns the
-slot the id was attached to and whether that slot was created by this call.
+Assign a new id to `xt` (already converted to the storage type), given its
+hash `h` and squared norm `n2`.  Returns the slot the id was attached to and
+whether that slot was created by this call.
 """
-function insert_vector!(db::KNNDatabase{T,C}, xt::AbstractVector{T}) where {T,C}
-    h = vhash(xt)
+function insert_vector!(db::KNNDatabase{T,C}, xt::AbstractVector{T}, h::UInt64, n2::C) where {T,C}
     id = db.nseen += 1
     s = find_slot(db, h, xt)
     if s != 0
@@ -295,7 +295,6 @@ function insert_vector!(db::KNNDatabase{T,C}, xt::AbstractVector{T}) where {T,C}
         return s, false
     end
     s = push!(db.storage, xt)
-    n2 = squared_norm(C, xt)
     sc, sh = slot_coeffs(db.metric, n2)
     push!(db.scale, sc)
     push!(db.shift, sh)
@@ -309,20 +308,67 @@ function insert_vector!(db::KNNDatabase{T,C}, xt::AbstractVector{T}) where {T,C}
 end
 
 """
+Columns per block of a bulk insertion.  Caps the temporary memory of
+[`append!`](@ref) at roughly `BULK_BLOCK * (dim + ndims) * 4` bytes however
+much is inserted, instead of growing with the whole input.
+"""
+const BULK_BLOCK = 1 << 14
+
+"Below this many columns the threaded prepass costs more than it saves."
+const PARALLEL_INSERT_MIN = 64
+
+"The columns of `Xb` in the storage type, without copying when they already are."
+staging(::Type{T}, Xb::AbstractMatrix{T}) where {T} = Xb
+function staging(::Type{T}, Xb::AbstractMatrix) where {T}
+    S = Matrix{T}(undef, size(Xb)...)
+    if size(Xb, 2) >= PARALLEL_INSERT_MIN
+        Threads.@threads :static for i in axes(Xb, 2)
+            @inbounds copyto!(view(S, :, i), view(Xb, :, i))
+        end
+    else
+        copyto!(S, Xb)
+    end
+    S
+end
+
+"Hashes and squared norms of every column, threaded for large blocks."
+function insert_prepass!(hashes::Vector{UInt64}, norms::Vector{C}, S::AbstractMatrix, B::Int) where {C}
+    if B >= PARALLEL_INSERT_MIN && Threads.nthreads() > 1
+        Threads.@threads :static for i in 1:B
+            @inbounds col = view(S, :, i)
+            @inbounds hashes[i] = vhash(col)
+            @inbounds norms[i] = squared_norm(C, col)
+        end
+    else
+        @inbounds for i in 1:B
+            col = view(S, :, i)
+            hashes[i] = vhash(col)
+            norms[i] = squared_norm(C, col)
+        end
+    end
+    nothing
+end
+
+"""
     insert_batch!(db, Xb) -> newpos
 
 Assign ids to all columns of `Xb` (dedup included) and return the positions
-of the columns that created new slots, in order.  Heads of the new slots are
-computed with one matrix product.
+of the columns that created new slots, in order.  Hashes and squared norms
+are computed in a threaded prepass; the heads of the new slots are computed
+with one matrix product.
 """
-function insert_batch!(db::KNNDatabase{T}, Xb::AbstractMatrix) where {T}
+function insert_batch!(db::KNNDatabase{T,C}, Xb::AbstractMatrix) where {T,C}
     size(Xb, 1) == dimension(db) || throw(DimensionMismatch("expected $(dimension(db)) rows, got $(size(Xb, 1))"))
+    B = size(Xb, 2)
+    B == 0 && return Int[]
     n0 = nslots(db)
+    S = staging(T, Xb)
+    hashes = Vector{UInt64}(undef, B)
+    norms = Vector{C}(undef, B)
+    insert_prepass!(hashes, norms, S, B)
     newpos = Int[]
-    xt = Vector{T}(undef, dimension(db))
-    for i in axes(Xb, 2)
-        xt .= view(Xb, :, i)
-        _, isnew = insert_vector!(db, xt)
+    @inbounds for i in 1:B
+        _, isnew = insert_vector!(db, view(S, :, i), hashes[i], norms[i])
         isnew && push!(newpos, i)
     end
     add_heads!(db, n0, length(newpos))
@@ -377,13 +423,24 @@ function Base.push!(db::KNNDatabase, x::AbstractVector)
 end
 
 """
-    append!(db, X) -> ids
+    append!(db, X; block = BULK_BLOCK) -> ids
 
-Insert the columns of `X` without searching.  Returns the assigned ids.
+Insert the columns of `X` without searching, and return the assigned ids.
+This is the **warm start** path: it is threaded, it never materialises more
+than `block` columns of scratch space, and it skips the search entirely, so
+loading a large initial set costs a few microseconds per vector instead of
+the quadratic cost of streaming it.  The resulting database is identical to
+one built by inserting the same vectors one at a time.
 """
-function Base.append!(db::KNNDatabase, X::AbstractMatrix)
+function Base.append!(db::KNNDatabase, X::AbstractMatrix; block::Integer = BULK_BLOCK)
+    size(X, 1) == dimension(db) || throw(DimensionMismatch("expected $(dimension(db)) rows, got $(size(X, 1))"))
+    block >= 1 || throw(ArgumentError("block must be positive"))
+    n = size(X, 2)
     first = db.nseen + 1
-    insert_batch!(db, X)
+    sizehint!(db.id2slot, db.nseen + n)
+    for lo in 1:block:n
+        insert_batch!(db, view(X, :, lo:min(lo + block - 1, n)))
+    end
     first:db.nseen
 end
 
